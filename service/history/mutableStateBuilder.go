@@ -2372,7 +2372,7 @@ func (e *mutableStateBuilder) ReplicateWorkflowExecutionContinuedAsNewEvent(sour
 		DecisionScheduleID:          di.ScheduleID,
 		DecisionStartedID:           di.StartedID,
 		DecisionStartToCloseTimeout: di.DecisionTimeout,
-		ContinueAsNew:               true,
+		CreateWorkflowMode:          persistence.CreateWorkflowModeContinueAsNew,
 		PreviousRunID:               prevRunID,
 		ReplicationState:            newStateBuilder.GetReplicationState(),
 	}
