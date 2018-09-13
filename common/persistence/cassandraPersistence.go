@@ -342,6 +342,10 @@ const (
 		`and task_id = ? ` +
 		`IF current_run_id = ? `
 
+	templateUpdateCurrentWorkflowExecutionForNewQuery = templateUpdateCurrentWorkflowExecutionQuery +
+		`and replication_state.last_write_version = ? ` +
+		`and execution.state = ? `
+
 	templateCreateCurrentWorkflowExecutionQuery = `INSERT INTO executions (` +
 		`shard_id, type, domain_id, workflow_id, run_id, visibility_ts, task_id, current_run_id, execution, replication_state) ` +
 		`VALUES(?, ?, ?, ?, ?, ?, ?, ?, {run_id: ?, create_request_id: ?, state: ?, close_status: ?}, {start_version: ?, last_write_version: ?}) IF NOT EXISTS USING TTL 0 `
@@ -1089,6 +1093,8 @@ func (d *cassandraPersistence) CreateWorkflowExecution(request *CreateWorkflowEx
 				break GetFailureReasonLoop
 			}
 
+			runID := previous["run_id"].(gocql.UUID).String()
+
 			if rowType == rowTypeShard {
 				if rangeID, ok := previous["range_id"].(int64); ok && rangeID != request.RangeID {
 					// CreateWorkflowExecution failed because rangeID was modified
@@ -1099,7 +1105,7 @@ func (d *cassandraPersistence) CreateWorkflowExecution(request *CreateWorkflowEx
 					}
 				}
 
-			} else if rowType == rowTypeExecution {
+			} else if rowType == rowTypeExecution && runID == permanentRunID {
 				var columns []string
 				for k, v := range previous {
 					columns = append(columns, fmt.Sprintf("%s=%v", k, v))
@@ -1110,8 +1116,8 @@ func (d *cassandraPersistence) CreateWorkflowExecution(request *CreateWorkflowEx
 					executionInfo := createWorkflowExecutionInfo(execution)
 
 					lastWriteVersion := common.EmptyVersion
-					replicationState := createReplicationState(previous["replication_state"].(map[string]interface{}))
-					if replicationState != nil {
+					if request.ReplicationState != nil {
+						replicationState := createReplicationState(previous["replication_state"].(map[string]interface{}))
 						lastWriteVersion = replicationState.LastWriteVersion
 					}
 
@@ -1175,8 +1181,17 @@ func (d *cassandraPersistence) CreateWorkflowExecutionWithinBatch(request *Creat
 	if request.ReplicationState != nil {
 		startVersion = request.ReplicationState.StartVersion
 		lastWriteVersion = request.ReplicationState.LastWriteVersion
+	} else {
+		// this is to deal with issue that gocql cannot return null value for value inside user defined type
+		// so we cannot know whether the last write version of current workflow record is null or not
+		// since non global domain (request.ReplicationState == null) will not have workflow reset problem
+		// so the CAS on last write version is not necessary
+		if request.CreateWorkflowMode == CreateWorkflowModeWorkflowIDReuse {
+			request.CreateWorkflowMode = CreateWorkflowModeContinueAsNew
+		}
 	}
-	if request.ContinueAsNew {
+	switch request.CreateWorkflowMode {
+	case CreateWorkflowModeContinueAsNew:
 		batch.Query(templateUpdateCurrentWorkflowExecutionQuery,
 			*request.Execution.RunId,
 			*request.Execution.RunId,
@@ -1194,7 +1209,27 @@ func (d *cassandraPersistence) CreateWorkflowExecutionWithinBatch(request *Creat
 			rowTypeExecutionTaskID,
 			request.PreviousRunID,
 		)
-	} else {
+	case CreateWorkflowModeWorkflowIDReuse:
+		batch.Query(templateUpdateCurrentWorkflowExecutionForNewQuery,
+			*request.Execution.RunId,
+			*request.Execution.RunId,
+			request.RequestID,
+			state,
+			closeStatus,
+			startVersion,
+			lastWriteVersion,
+			d.shardID,
+			rowTypeExecution,
+			request.DomainID,
+			*request.Execution.WorkflowId,
+			permanentRunID,
+			defaultVisibilityTimestamp,
+			rowTypeExecutionTaskID,
+			request.PreviousRunID,
+			request.PreviousLastWriteVersion,
+			WorkflowStateCompleted,
+		)
+	case CreateWorkflowModeBrandNew:
 		batch.Query(templateCreateCurrentWorkflowExecutionQuery,
 			d.shardID,
 			rowTypeExecution,
@@ -1211,6 +1246,8 @@ func (d *cassandraPersistence) CreateWorkflowExecutionWithinBatch(request *Creat
 			startVersion,
 			lastWriteVersion,
 		)
+	default:
+		d.logger.Panic(fmt.Sprintf("Unknown CreateWorkflowContinueAsNew Mode: %v", request.CreateWorkflowMode))
 	}
 
 	if request.ReplicationState == nil {
