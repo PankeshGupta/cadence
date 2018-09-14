@@ -149,7 +149,7 @@ func (s *cassandraPersistenceSuite) TestCreateWorkflowExecution_RunIDReuse_WithR
 		ReplicationState:         replicationState,
 	})
 	s.NotNil(err)
-	s.IsType(&WorkflowExecutionAlreadyStartedError{}, err)
+	s.IsType(&ConditionFailedError{}, err)
 
 	info, err := s.GetWorkflowExecutionInfo(domainID, workflowExecution)
 	s.Nil(err)

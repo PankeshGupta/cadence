@@ -21,6 +21,7 @@
 package history
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -735,6 +736,17 @@ func convertSignalRequestedIDs(inputs map[string]struct{}) []string {
 	}
 	return outputs
 }
+func (e *mutableStateBuilder) print(msg string, others ...interface{}) {
+	print := func(value interface{}) string {
+		bytes, _ := json.MarshalIndent(value, "", "  ")
+		return string(bytes)
+	}
+	fmt.Printf("++++++++++\n")
+	fmt.Printf("## %v ##\n", msg)
+	fmt.Printf("## MS:\n%v - %v - %v\n.", print(e.CopyToPersistence()), print(others), print(e.hBuilder.history))
+	fmt.Printf("++++++++++\n")
+	e.logger.Error("MS flush corrupted.")
+}
 
 func (e *mutableStateBuilder) assignEventIDToBufferedEvents() {
 	newCommittedEvents := e.hBuilder.history
@@ -770,6 +782,8 @@ func (e *mutableStateBuilder) assignEventIDToBufferedEvents() {
 			attributes := event.ActivityTaskCompletedEventAttributes
 			if startedID, ok := scheduledIDToStartedID[attributes.GetScheduledEventId()]; ok {
 				attributes.StartedEventId = common.Int64Ptr(startedID)
+			} else if attributes.GetStartedEventId() == common.BufferedEventID {
+				e.print(fmt.Sprintf("error flushing buffer - %v", event.GetEventType()), scheduledIDToStartedID)
 			}
 		case workflow.EventTypeActivityTaskFailed:
 			attributes := event.ActivityTaskFailedEventAttributes
