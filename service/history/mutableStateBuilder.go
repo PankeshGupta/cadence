@@ -22,7 +22,6 @@ package history
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 
@@ -30,6 +29,7 @@ import (
 	workflow "github.com/uber/cadence/.gen/go/shared"
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/cache"
+	"github.com/uber/cadence/common/errors"
 	"github.com/uber/cadence/common/logging"
 	"github.com/uber/cadence/common/persistence"
 
@@ -1084,7 +1084,7 @@ func (e *mutableStateBuilder) DeleteActivity(scheduleEventID int64) error {
 	if !ok {
 		errorMsg := fmt.Sprintf("Unable to find activity with schedule event id: %v in mutable state", scheduleEventID)
 		logging.LogMutableStateInvalidAction(e.logger, errorMsg)
-		return errors.New(errorMsg)
+		return errors.NewInternalFailureError(errorMsg)
 	}
 	delete(e.pendingActivityInfoIDs, scheduleEventID)
 
@@ -1092,7 +1092,7 @@ func (e *mutableStateBuilder) DeleteActivity(scheduleEventID int64) error {
 	if !ok {
 		errorMsg := fmt.Sprintf("Unable to find activity: %v in mutable state", a.ActivityID)
 		logging.LogMutableStateInvalidAction(e.logger, errorMsg)
-		return errors.New(errorMsg)
+		return errors.NewInternalFailureError(errorMsg)
 	}
 	delete(e.pendingActivityInfoByActivityID, a.ActivityID)
 
